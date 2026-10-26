@@ -1,0 +1,46 @@
+name: Component Detection
+
+on:
+  push:
+    branches: [cd-base]
+  pull_request:
+    branches: [cd-base]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-submission:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore
+      - uses: advanced-security/component-detection-dependency-submission-action@v0.2.0
+        with:
+          detectorsCategories: NuGet
+          # On pull_request, github.sha is the merge commit; dependency review looks up the head commit.
+          snapshot-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          snapshot-ref: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.head_ref) || github.ref }}
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    needs: dependency-submission
+    runs-on: ubuntu-latest
+    steps:
+      - id: review
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: low
+          allow-licenses: MIT, Apache-2.0
+          retry-on-snapshot-warnings: true
+          retry-on-snapshot-warnings-timeout: 300
+      - if: always()
+        env:
+          CHANGES: ${{ steps.review.outputs.dependency-changes }}
+        run: echo "$CHANGES" | jq -r '.[] | [.change_type, .manifest, .name, .version, .package_url, .license, (.vulnerabilities | length)] | @tsv'
